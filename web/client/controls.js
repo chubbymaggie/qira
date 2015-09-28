@@ -35,7 +35,7 @@ Deps.autorun(function() { DA("update controls");
   $("#control_iaddr").val(Session.get("iaddr"));
   $("#control_daddr").val(Session.get("daddr"));
 });
-  
+
 $(document).ready(function() {
   $('#control_clnum').on('change', function(e) {
     Session.set("clnum", fdec(e.target.value));
@@ -47,8 +47,7 @@ $(document).ready(function() {
     if (e.target.value == "") {
       Session.set("iaddr", undefined);
     } else {
-      Session.set("iaddr", e.target.value);
-      Session.set("dirtyiaddr", true);
+      update_iaddr(e.target.value, true);
     }
   });
   $('#control_daddr').on('change', function(e) {
@@ -77,24 +76,24 @@ $(document).ready(function() {
     }
     if (isend) is_dragging = false;
   }
-  $('#staticpanel').on('mousewheel', '#outergbox', function(e) {
+  $('#cfg-static').on('mousewheel', '#outergbox', function(e) {
     var wdx = e.originalEvent.wheelDeltaX;
     var wdy = e.originalEvent.wheelDeltaY;
     $("#gbox").css("margin-left", fdec($("#gbox").css("margin-left")) + wdx);
     $("#gbox").css("margin-top", fdec($("#gbox").css("margin-top")) + wdy);
   });
-  $('#staticpanel').on('mousedown', '#outergbox', function(e) {
+  $('#cfg-static').on('mousedown', '#outergbox', function(e) {
     //p("mousedown");
     startDrag(e.screenX, e.screenY);
     return false;
   });
-  $('#staticpanel').on('mousemove', '#outergbox', function(e) {
+  $('#cfg-static').on('mousemove', '#outergbox', function(e) {
     endDrag(e.screenX, e.screenY, false);
   });
-  $('#staticpanel').on('mouseup', '#outergbox', function(e) {
+  $('#cfg-static').on('mouseup', '#outergbox', function(e) {
     endDrag(e.screenX, e.screenY, true);
   });
-  $('#staticpanel').on('mouseout', '#outergbox', function(e) {
+  $('#cfg-static').on('mouseout', '#outergbox', function(e) {
     // TODO: FIX THIS!
     /*p(e.target);
     p(e.target.id);*/
@@ -132,6 +131,7 @@ Session.setDefault("flat", false);
 window.onkeydown = function(e) {
   //p(e.keyCode);
   //p(e);
+  if (e.ctrlKey == true) return;
   if (e.keyCode == 32) {
     // space bar
     Session.set("flat", !Session.get("flat"));
@@ -149,6 +149,31 @@ window.onkeydown = function(e) {
         Session.set("forknum", arr[idx+1]);
       }
     }
+  } else if (e.keyCode == 89) {
+    var addr = Session.get("iaddr");
+    var func = sync_tags_request([addr])[0]['function'];
+    if (func !== undefined) {
+      var args = prompt("#args for function",sync_tags_request([addr])[0]['nargs']);
+      stream.emit('setfunctionargswrap',addr,args);
+    }
+  } else if (e.keyCode == 67 && e.shiftKey == true) {
+    // shift-C = clear all forks
+    delete_all_forks();
+  } else if (e.keyCode == 'P'.charCodeAt(0)) {  // p, make function
+    stream.emit('make', 'function', Session.get("iaddr"));
+    Session.set("flat", Session.get("flat"));
+  } else if (e.keyCode == 'C'.charCodeAt(0)) {  // c, make code
+    stream.emit('make', 'code', Session.get("iaddr"));
+    Session.set("flat", Session.get("flat"));
+  } else if (e.keyCode == 'A'.charCodeAt(0)) {  // a, make string
+    stream.emit('make', 'string', Session.get("iaddr"));
+    Session.set("flat", Session.get("flat"));
+  } else if (e.keyCode == 'D'.charCodeAt(0)) {  // d, make data
+    stream.emit('make', 'data', Session.get("iaddr"));
+    Session.set("flat", Session.get("flat"));
+  } else if (e.keyCode == 'U'.charCodeAt(0)) {  // u, make undefined
+    stream.emit('make', 'undefined', Session.get("iaddr"));
+    Session.set("flat", Session.get("flat"));
   } else if (e.keyCode == 38) {
     Session.set("clnum", Session.get("clnum")-1);
   } else if (e.keyCode == 40) {
@@ -160,18 +185,11 @@ window.onkeydown = function(e) {
   } else if (e.keyCode == 90) {  // z
     zoom_out_max();
   } else if (e.keyCode == 74) {  // vim down, j
-    go_to_flag(true, false);
+    go_to_flag(true, e.shiftKey);
   } else if (e.keyCode == 75) {  // vim up, k
-    go_to_flag(false, false);
-  } else if (e.keyCode == 85) {  // vim down, row up, data, u
-    go_to_flag(true, true);
-  } else if (e.keyCode == 73) {  // vim up, row up, data, i
-    go_to_flag(false, true);
+    go_to_flag(false, e.shiftKey);
   } else if (e.keyCode == 27) {  // esc
     history.back();
-  } else if (e.keyCode == 67 && e.shiftKey == true) {
-    // shift-C = clear all forks
-    delete_all_forks();
   } else if (e.keyCode == 78 || e.keyCode == 186) {
     // 186 is comment
     if (e.shiftKey) {
@@ -298,4 +316,3 @@ $(document).ready(function() {
     push_history("click flag");
   });
 });
-

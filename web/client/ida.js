@@ -3,6 +3,10 @@ var ws = undefined;
 function do_ida_socket(callme) {
   if (ws == undefined || ws.readyState == WebSocket.CLOSED) {
     ws = new WebSocket('ws://localhost:3003', 'qira');
+    ws.onerror = function(e) {
+      // TODO: why doesn't this catch the "net::ERR_CONNECTION_REFUSED"?
+      // hmm, it looks like it does, but error is still printed to console
+    };
     ws.onopen = function() {
       p('connected to IDA socket');
       callme();

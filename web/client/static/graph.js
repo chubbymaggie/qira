@@ -101,10 +101,10 @@ Graph.prototype.render = function() {
   }
 
   var outergbox = $('<div id="outergbox"></div>');
-  $("#staticpanel").html("");
+  $("#cfg-static").html("");
   gbox = document.createElement('div');
   outergbox[0].appendChild(gbox);
-  document.getElementById("staticpanel").appendChild(outergbox[0]);
+  document.getElementById("cfg-static").appendChild(outergbox[0]);
   gbox.id = 'gbox';
   gbox.className = name;
   if (name in gPos) {
@@ -254,4 +254,3 @@ Graph.prototype.debugPrint = function() {
     p('  '+this.edges[i]['from']+' -'+this.edges[i]['color']+'> '+this.edges[i]['to']);
   }
 };
-

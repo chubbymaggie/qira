@@ -6,21 +6,44 @@ Deps.autorun(function() { DA("update static view");
   var iview = Session.get('iview');
   var flat = Session.get('flat');
   if (iview === undefined) return;
-  stream.emit('getstaticview', iview, flat, [-15,40]);
-});
 
-/*$(function() {
-  $("#staticpanel").css("display", "none");
-});*/
+  var size = get_size("#flat-static");
+  p(size);
+
+  stream.emit('getstaticview', iview, flat, [-5,size-5]);
+});
 
 
 // TODO: this code is replicated in idump.js
 function instruction_html_from_tags(ins) {
-  var idump = '<div class="instruction">';
-  idump += '<span class="insaddr datainstruction addr addr_'+ins.address+'">'+ins.address+'</span> '+
-  //'<div class="instructiondesc">'+hex(ins.flags)+'</div> '+
-  '<div class="instructiondesc">'+highlight_instruction(ins.instruction)+'</div> '+
-  '<span class="comment comment_'+ins.address+'">'+(ins.comment != undefined ? "; "+ins.comment : "")+'</span>';
+  var idump = '<div class="instruction instruction_static">';
+  idump += '<span class="insaddr datainstruction addr addr_'+ins.address+'">'+ins.address+'</span> ';
+  if (ins.instruction !== undefined) {
+    idump += '<div class="instructiondesc">'+highlight_instruction(ins.instruction)+'</div> ';
+  } else {
+    if (ins.type == "string") {
+      idump += '<div class="stringdesc">';
+      idump += "'";
+      // TODO: escaping?
+      ins.bytes.forEach(function(x) {
+        idump += String.fromCharCode(x);
+      });
+      idump += "'";
+      idump += '</div>';
+    } else {
+      if (ins.type == "data") {
+        idump += '<div class="datadesc">';
+      } else {
+        idump += '<div class="bytesdesc">';
+      }
+      ins.bytes.forEach(function(x) {
+        idump += hex2(x)+" ";
+      });
+      idump += '</div>';
+    }
+  }
+
+  idump += '<span class="comment comment_'+ins.address+'">'+(ins.comment != undefined ? "; "+ins.comment : "")+'</span>';
   idump += '</div>';
   return idump;
 }
@@ -32,16 +55,16 @@ function display_flat(addrs) {
     idump += instruction_html_from_tags(addrs[i]);
   }
   idump += '</div>';
-  $("#staticpanel").html(idump);
+  $("#flat-static").html(idump);
 }
 
-function on_flat(addrs) { DS("flat"); 
+function on_flat(addrs) { DS("flat");
   display_flat(addrs);
   rehighlight();
   replace_names();
 } stream.on('flat', on_flat);
 
-function on_function(fxn) { DS("function"); 
+function on_function(fxn) { DS("function");
   var graph = new Graph();
   p(fxn);
 
@@ -50,7 +73,7 @@ function on_function(fxn) { DS("function");
     if (bb.length == 0) continue;
     var addr = bb[0].address;
     var cnt = bb.length;
-    
+
     var idump = "";
     for (var i = 0; i < cnt; i++) {
       idump += instruction_html_from_tags(bb[i]);

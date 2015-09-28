@@ -20,6 +20,7 @@
 # instruction -- string of this instruction
 # arch -- arch of this instruction
 # crefs -- code xrefs
+# type -- type of instruction
 
 
 # objects are allowed in the key-value store,
@@ -30,66 +31,32 @@
 
 import collections
 import os, sys
-
-import recursive
-import loader
-import disasm
-import byteweight
-
 import re
+import pickle
+import atexit
+from hashlib import sha1
 
-# debugging
-try:
-  from hexdump import hexdump
-except:
-  pass
+sys.path.append("../middleware")
+import qira_config
 
-# allow for special casing certain tags
-class Tags:
-  def __init__(self, static, address):
-    self.backing = {}
-    self.static = static
-    self.address = address
-
-
-  def __contains__(self, tag):
-    return tag in self.backing
-
-  def __getitem__(self, tag):
-    if tag in self.backing:
-      return self.backing[tag]
-    else:
-      # should reading the instruction tag trigger disasm?
-      # and should dests be a seperate tag?
-      if tag == "instruction":
-        dat = self.static.memory(self.address, 0x10)
-        # arch should probably come from the address with fallthrough
-        self.backing['instruction'] = disasm.disasm(dat, self.address, self.static['arch'])
-        self.backing['len'] = self.backing['instruction'].size()
-        return self.backing[tag]
-      if tag == "crefs" or tag == "xrefs":
-        # crefs has a default value of a new array
-        self.backing[tag] = set()
-        return self.backing[tag]
-      if tag in self.static.global_tags:
-        return self.static.global_tags[tag]
-      return None
-
-  def __setitem__(self, tag, val):
-    if tag == "instruction" and type(val) == str:
-      raise Exception("instructions shouldn't be strings")
-    if tag == "name":
-      # name can change by adding underscores
-      val = self.static.set_name(self.address, val)
-    self.backing[tag] = val
+from model import *
 
 # the new interface for all things static
 # will only support radare2 for now
 # mostly tags, except for names and functions
 class Static:
-  def __init__(self, path, debug=False):
+  def __init__(self, path, debug=0, static_engine=None):
+    # create the static cache dir
+    try:
+      os.mkdir(qira_config.STATIC_CACHE_BASE)
+    except:
+      pass
+
     self.tags = {}
     self.path = path
+    self.scf = qira_config.STATIC_CACHE_BASE + sha1(open(self.path, "rb").read()).hexdigest()
+    self.r2core = None
+    self.debug = debug
 
     # radare doesn't seem to have a concept of names
     # doesn't matter if this is in the python
@@ -97,25 +64,104 @@ class Static:
 
     # fall through on an instruction
     # 'arch'
-    self.global_tags = {}
+    self.global_tags = Tags(self)
     self.global_tags['functions'] = set()
     self.global_tags['blocks'] = set()
-    self.global_tags['sections'] = []
+    self.global_tags['segments'] = []
 
     # concept from qira_program
     self.base_memory = {}
 
-    # run the elf loader
-    loader.load_binary(self, path)
+    #pass static engine as an argument for testing
+    if static_engine is None:
+      static_engine = qira_config.STATIC_ENGINE
 
-    self.debug = debug
-    print "*** elf loaded"
+    # TODO: clean this up
+    if static_engine == "r2":
+      sys.path.append(os.path.join(qira_config.BASEDIR, "static2", "r2"))
+      import r2pipe 
+      import loader 
+      import analyzer
+      self.r2core = r2pipe.r2pipe(path)
+      # capstone is not working ok yet, so using udis for now
+      self.r2core.cmd("e asm.arch=x86.udis")
+      self.r2core.cmd("aa;af @ main")
+    elif static_engine == "ida":
+      # run the elf loader
+      sys.path.append(os.path.join(qira_config.BASEDIR, "static2", "ida"))
+      import ida
+      class loader():
+        @staticmethod
+        def load_binary(static):
+          ida.init_with_binary(static.path)
+      class analyzer():
+        @staticmethod
+        def analyze_functions(x):
+          dat = ida.fetch_tags()
+          print dat
+    else:
+      # run the elf loader
+      sys.path.append(os.path.join(qira_config.BASEDIR, "static2", "builtin"))
+      import loader
+      import analyzer
+    self.analyzer = analyzer
+    loader.load_binary(self)
+
+    if self.debug >= 1:
+      print "*** elf loaded"
+
+    """
+    # check the cache
+    if os.path.isfile(self.scf):
+      # cache is global_tags + tags
+      with open(self.scf) as f:
+        try:
+          dd = pickle.load(f)
+          print "*** read %d bytes from static cache" % f.tell()
+        except:
+          dd = None
+          print "*** static cache corrupt, ignoring"
+        if dd != None:
+          self.deserialize(dd)
+      pass
+
+    # register cache writing
+    def write_cache():
+      with open(self.scf, "wb") as f:
+        dat = self.serialize()
+        pickle.dump(dat, f)
+        print "*** wrote %d bytes to static cache" % f.tell()
+
+    atexit.register(write_cache)
+    """
+
+  def serialize(self):
+    def blacklist(d):
+      ret = {}
+      for k in d:
+        #if k == "instruction":
+        if k != "name":
+          continue
+        ret[k] = d[k]
+      return ret
+    kk = self.tags.keys()
+    vv = map(lambda x: blacklist(self.tags[x].backing), kk)
+    return self.global_tags.backing, kk, vv
+
+  def deserialize(self, dat):
+    gt, kk, vv = dat
+    for k in gt:
+      self[k] = gt[k]
+
+    for address, dd in zip(kk, vv):
+      for k in dd:
+        self[address][k] = dd[k]
 
   # this should be replaced with a 
   def set_name(self, address, name):
     if name not in self.rnames:
       self.rnames[name] = address
-    else:
+    elif address != self.rnames[name]:
       # add underscore if name already exists
       return self.set_name(address, name+"_")
     return name
@@ -189,46 +235,53 @@ class Static:
     dat = []
     for i in range(ln):
       ri = address+i
-      for (ss, se) in self.base_memory:
+
+      # hack for "RuntimeError: dictionary changed size during iteration"
+      for (ss, se) in self.base_memory.keys():
         if ss <= ri and ri < se:
           try:
             dat.append(self.base_memory[(ss,se)][ri-ss])
+            break
           except:
             return ''.join(dat)
     return ''.join(dat)
 
   def add_memory_chunk(self, address, dat):
-    # sections should have an idea of section permission
-    self['sections'].append((address, len(dat)))
+    #print "add segment",hex(address),len(dat)
+    # check for dups
+    for (laddress, llength) in self.base_memory:
+      if address == laddress:
+        if self.base_memory[(laddress, llength)] != dat:
+          print "*** WARNING, changing segment",hex(laddress),llength
+        return
+
+    # segments should have an idea of segment permission
+    self['segments'].append((address, len(dat)))
     self.base_memory[(address, address+len(dat))] = dat
 
-  # run the analysis, not required for use of static
   def process(self):
-    recursive.make_function_at(self, self['entry'])
-    """
-    main = self.get_address_by_name("main")
-    if main != None:
-      recursive.make_function_at(self, main)
-    """
-    bw_functions = byteweight.fsi(self)
-    for f in bw_functions:
-      recursive.make_function_at(self, f)
-    print "*** found %d functions" % len(self['functions'])
+    self.analyzer.analyze_functions(self)
+    if self.debug >= 1:
+      print "*** found %d functions" % len(self['functions'])
 
 
 # *** STATIC TEST STUFF ***
 
 if __name__ == "__main__":
-  static = Static(sys.argv[1],debug=True)
+  static = Static(sys.argv[1],debug=1)
   print "arch:",static['arch']
 
   # find main
+  static.process()
+  """
   main = static.get_address_by_name("main")
-  print "main is at", hex(main)
+  print "main is at", main
   recursive.make_function_at(static, static['entry'])
   print "found %d functions" % len(static['functions'])
   recursive.make_function_at(static, main)
   print "found %d functions" % len(static['functions'])
+  """
+
 
   # function printer
   for f in sorted(static['functions']):
@@ -238,13 +291,20 @@ if __name__ == "__main__":
       for a in sorted(b.addresses):
         print "    ",hex(a),static._insert_names(static[a]['instruction'])
 
+
+  # print symbols
+  print "symbols"
+  names = static.get_tags(['name'])
+  for addr in names:
+    print "%8x: %s" % (addr, names[addr]['name'])
+
   #print static['functions']
 
   #print static[main]['instruction'], map(hex, static[main]['crefs'])
   #print static.get_tags(['name'])
-  bw_functions = byteweight.fsi(static)
-  for f in bw_functions:
-    print hex(f)
-    hexdump(static.memory(f, 0x20))
+  #bw_functions = byteweight.fsi(static)
+  #for f in bw_functions:
+    #print hex(f)
+    #hexdump(static.memory(f, 0x20))
 
 

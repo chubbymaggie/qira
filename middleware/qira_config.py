@@ -1,9 +1,7 @@
 import os,sys
 
-WITH_CDA = False
-WITH_DWARF = False
 TRACE_LIBRARIES = False
-HOST = '127.0.0.1'
+HOST = '0.0.0.0'
 WEB_PORT = 3002
 SOCAT_PORT = 4000
 FORK_PORT = SOCAT_PORT + 1
@@ -15,16 +13,14 @@ else:
 
 BASEDIR = os.path.realpath(os.path.dirname(os.path.realpath(__file__))+"/../")
 sys.path.append(BASEDIR)
-CODESEARCHDIR = BASEDIR+"/cda/codesearch-latest/"
-#CODESEARCHDIR = "/usr/bin/"
 
-CALLED_AS_CDA = False
+# BAP is no longer supported
+WITH_BAP = False
 
-# capstone is now a requirement
-WITH_CAPSTONE = True
-
-# turn this off for now on releases
+# TODO: make this true in v3
 WITH_STATIC = False
+STATIC_ENGINE = "builtin"
+STATIC_CACHE_BASE = "/tmp/qira_static_cache/"
 
 WEBSOCKET_DEBUG = False
 

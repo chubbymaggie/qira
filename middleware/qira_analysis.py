@@ -1,8 +1,13 @@
 #!/usr/bin/env python2.7
 import qira_config
 import qira_program
+import arch
 import time
 import math
+import sys
+import struct
+sys.path.append(qira_config.BASEDIR+"/static2")
+import static2
 
 def ghex(a):
   if a == None:
@@ -273,18 +278,154 @@ def get_instruction_flow(trace, program, minclnum, maxclnum):
       continue
     
     # this will trigger the disassembly
-    ins = str(program.static[r[0]['address']]['instruction'])
+    instr = program.static[r[0]['address']]['instruction']
+    ins = str(instr)
     ret.append((r[0]['address'], r[0]['data'], r[0]['clnum'], ins))
     if (time.time() - start) > 0.01:
       time.sleep(0.01)
       start = time.time()
+
   return ret
+
+def get_last_instr(dmap,clnum):
+  myd = dmap[clnum]+1
+  clnum += 1
+  ret = clnum
+  while 0 <= clnum < len(dmap):
+    if dmap[clnum] == myd-1:
+      break
+    ret = clnum
+    clnum += 1
+  if not (0 <= clnum < len(dmap)):
+    return None
+  return ret
+
+def guess_calling_conv(program,readregs,readstack):
+  if not (readregs or readstack):
+    return ('UNKNOWN',0) #we can't guess the ABI with 0 information
+
+  regs = program.tregs[0]
+  readregs = map(lambda x: regs[x], readregs) #convert read regs into strings
+
+  for abi in filter(lambda x:x[0] != "_",static2.ABITYPE.__dict__):
+    if abi == 'UNKNOWN':
+      continue
+
+    regs_cpy = [r for r in readregs]
+
+    consistent = len(regs_cpy) <= len(static2.ABITYPE.__dict__[abi][0]) #we are consistent with this ABI
+    for reg in static2.ABITYPE.__dict__[abi][0]:
+      if regs_cpy and reg in regs_cpy:
+        regs_cpy.remove(reg)
+      else:
+        if readstack or regs_cpy:
+          consistent = False
+        break
+
+    if consistent:
+      return (abi,readstack+len(readregs))
+
+  return ('UNKNOWN',0)
+
+def analyse_calls(trace):
+  program = trace.program
+  for (addr,data,clnum,ins) in trace.flow:
+    instr = program.static[addr]['instruction']
+    if not instr.is_call():
+      continue
+
+    endclnum = get_last_instr(trace.dmap,clnum)
+    if endclnum is None:
+      continue
+
+    #the function ran from start to ret... analyze what happened in there
+    regs = trace.db.fetch_registers(clnum)
+    iptr = trace.db.fetch_changes_by_clnum(clnum+1, 1)[0]['address']
+
+    program.static.analyzer.make_function_at(program.static,iptr)
+    func = program.static[iptr]['function']
+
+    if program.static['arch'] in ["i386","x86-64","arm"]:
+      stack_reg = ["ESP","RSP","SP"][["i386","x86-64","arm"].index(program.static['arch'])]
+      esp = regs[program.tregs[0].index(stack_reg)]
+
+      nregs = len(regs)
+      rsize = program.tregs[1]
+
+      argrange = [esp+rsize,esp+rsize*11]
+      seen = 0
+      init_regs = set()
+      uninit_regs = set()
+      for cl in xrange(clnum+1,endclnum):
+        changes = filter(lambda x:x['type'] in "LS",trace.db.fetch_changes_by_clnum(cl, -1))
+        argchanges = filter(lambda x:argrange[0] <= x['address'] <= argrange[1], changes)
+        if len(argchanges) > 0:
+          seen = max(max(map(lambda x:x['address'],argchanges)),seen)
+        rchanges = filter(lambda x:x['type'] in "RW",trace.db.fetch_changes_by_clnum(cl, -1))
+        for rchange in rchanges:
+          regnum = rchange['address']/rsize
+          if rchange['type'] is 'W' and regnum < nregs:
+            init_regs.add(regnum)
+            if ((regnum) in uninit_regs) and (rchange['data'] == regs[regnum]):
+              #if we thought they did an uninitialized read and they just clobbered it and wrote it later,
+              #don't consider this a possible argument
+              uninit_regs.remove(regnum)
+          elif (rchange['type'] is 'R' and regnum < nregs) and (regnum not in init_regs):
+            uninit_regs.add(regnum)
+      abi,nargs = guess_calling_conv(program,uninit_regs,((seen-esp)/rsize) if (seen > 0) else 0)
+      if func.abi is 'UNKNOWN':
+        func.abi = abi
+      func.nargs = max(nargs,func.nargs)
+
+
+def display_call_args(instr,trace,clnum):
+  program = trace.program
+  regs = trace.db.fetch_registers(clnum)
+  iptr = trace.db.fetch_changes_by_clnum(clnum+1, 1)[0]['address']
+  program.static.analyzer.make_function_at(program.static,iptr)
+
+  func = program.static[iptr]['function']
+  if func.abi is 'UNKNOWN':
+    return ""
+
+  endclnum = get_last_instr(trace.dmap,clnum)
+
+  args,outp = static2.ABITYPE.__dict__[func.abi]
+  nargs = func.nargs
+
+  ret = []
+  i = 0
+  for i in xrange(min(nargs,len(args))):
+    ret += [ghex(regs[program.tregs[0].index(args[i])])]
+
+  if len(args) > 0:
+    i += 1
+
+  if i < nargs:
+    stack_reg = ["ESP","RSP","SP"][["i386","x86-64","arm"].index(program.static['arch'])]
+    esp = regs[program.tregs[0].index(stack_reg)]
+    for j in xrange(i,nargs):
+      ret += [ghex(struct.unpack("<Q" if program.tregs[1] == 8 else "<I", \
+       trace.fetch_raw_memory(clnum, esp+program.tregs[1], program.tregs[1]))[0])]
+      esp += program.tregs[1]
+
+  if endclnum:
+    endregs = trace.db.fetch_registers(endclnum)
+    ret += ["-> " + ghex(endregs[program.tregs[0].index(outp)])]
+  return " ".join(ret)
+
+#finds first occurence of a in l from the right
+#assumes a in l
+def rindex(l, a):
+  return len(l) - l[::-1].index(a) - 1
 
 def get_hacked_depth_map(flow, program):
   start = time.time()
   return_stack = []
   ret = [0]
   last_clnum = None
+
+  branch_delay = False
   for (address, length, clnum, ins) in flow:
     # handing missing changes
     if last_clnum != None and clnum != last_clnum+1:
@@ -293,13 +434,24 @@ def get_hacked_depth_map(flow, program):
     last_clnum = clnum
 
     if address in return_stack:
-      return_stack = return_stack[0:return_stack.index(address)]
+      return_stack = return_stack[:rindex(return_stack, address)]
     # ugh, so gross
-    ret.append(len(return_stack))
-    for test in program.tregs[4]:
-      if ins[0:len(test)] == test:
-        return_stack.append(address+length)
-        break
+    if branch_delay:
+        ret.append(len(return_stack)-1)
+        branch_delay = False
+    else:
+        ret.append(len(return_stack))
+
+    instr = program.static[address]['instruction']
+    if instr.is_call():
+      if program.tregs[3][:4] == "mips":
+        # branch delay slot
+        branch_delay = True
+        ret_offset = length*2
+      else:
+        ret_offset = length
+      return_stack.append(address+ret_offset)
+
     if (time.time() - start) > 0.01:
       time.sleep(0.01)
       start = time.time()
@@ -360,6 +512,7 @@ def analyze(trace, program):
   #dmap = get_depth_map(fxns, maxclnum)
   dmap = get_hacked_depth_map(flow)
   
+  #analyse_calls(program,flow)
   #loops = do_loop_analysis(blocks)
   #print loops
 
