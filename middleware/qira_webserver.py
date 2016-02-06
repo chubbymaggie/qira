@@ -68,7 +68,7 @@ def push_trace_update(i):
 def push_updates(full = True):
   socketio.emit('pmaps', program.get_pmaps(), namespace='/qira')
   socketio.emit('maxclnum', program.get_maxclnum(), namespace='/qira')
-  socketio.emit('arch', program.tregs, namespace='/qira')
+  socketio.emit('arch', list(program.tregs), namespace='/qira')
   if not full:
     return
   for i in program.traces:
@@ -263,7 +263,7 @@ def getinstructions(forknum, clnum, clstart, clend):
       rret = rret[0]
 
     instr = program.static[rret['address']]['instruction']
-    rret['instruction'] = str(instr)
+    rret['instruction'] = instr.__str__(trace, i) #i == clnum
 
     # check if static fails at this
     if rret['instruction'] == "":
@@ -433,5 +433,9 @@ def run_server(largs, lprogram):
 
   print "****** starting WEB SERVER on %s:%d" % (qira_config.HOST, qira_config.WEB_PORT)
   threading.Thread(target=mwpoller).start()
-  socketio.run(app, host=qira_config.HOST, port=qira_config.WEB_PORT, log=open("/dev/null", "w"))
+  try:
+    socketio.run(app, host=qira_config.HOST, port=qira_config.WEB_PORT, log=open("/dev/null", "w"))
+  except KeyboardInterrupt:
+    print "*** User raised KeyboardInterrupt"
+    exit()
 

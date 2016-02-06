@@ -1,5 +1,9 @@
 #include <stdio.h>
 #include <fcntl.h>
+#ifndef __STDC_FORMAT_MACROS
+#define __STDC_FORMAT_MACROS 1
+#endif
+#include <inttypes.h>
 
 #ifndef _WIN32
 #include <sys/mman.h>
@@ -91,7 +95,7 @@ bool Trace::remap_backing(uint64_t new_size) {
   while (1) {
     DWORD fs = GetFileSize(fd_, NULL);
     if (fs < new_size) {
-      printf("WARNING: requested %llx bytes, but only %llx are in the file...waiting\n", new_size, fs);
+      printf("WARNING: requested %" PRIu64 " bytes, but only %llx are in the file...waiting\n", new_size, fs);
       usleep(100 * 1000);
     } else {
       break;
@@ -105,8 +109,8 @@ bool Trace::remap_backing(uint64_t new_size) {
 #else
   while (1) {
     off_t fs = lseek(fd_, 0, SEEK_END);
-    if (fs < new_size) {
-      printf("WARNING: requested %llx bytes, but only %llx are in the file...waiting\n", new_size, fs);
+    if ((unsigned int)fs < new_size) {
+      printf("WARNING: requested %" PRIu64 " bytes, but only %" PRIx64 " are in the file...waiting\n", new_size, fs);
       usleep(100 * 1000);
     } else {
       break;
@@ -192,7 +196,7 @@ void Trace::process() {
     ret.first->second.insert(c->clnum);
 
     // registers_
-    if (type == 'W' && c->address < (register_size_ * register_count_)) {
+    if (type == 'W' && (c->address < (unsigned int)(register_size_ * register_count_))) {
       registers_[c->address / register_size_][c->clnum] = c->data;
     }
 
