@@ -3,11 +3,16 @@ unamestr=$(uname)
 if [[ "$unamestr" == 'Linux' ]]; then
   DIR=$(dirname $(readlink -f $0))
 elif [[ "$unamestr" == "Darwin" ]]; then
-  DIR=$(dirname $(readlink $(which $0)))
+  cmd=$(which "$0")
+  if [ -L "$cmd" ]; then
+    cmd=$(readlink "$cmd")
+  fi
+  DIR=$(dirname "$cmd")
 else
   echo "Only Linux and Mac OS X are supported!"
   exit
 fi
 
+unset PYTHONPATH
 source $DIR/venv/bin/activate
 exec /usr/bin/env python2.7 $DIR/middleware/qira.py $*
