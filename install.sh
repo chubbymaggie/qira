@@ -11,7 +11,7 @@ LIBCAPSTONE64_SHA256="a7bf1cb814c6e712a314659b074bc4c00d2e0006cac67d055d3130d4ec
 LIBCAPSTONE32_SHA256="4ffb4630829b9b4e8c713ae8336a8259b180194233f248170bfe0d1577257fb2"
 
 unamestr=$(uname)
-arch=$(uname -p)
+arch=$(uname -m)
 
 if [[ "$unamestr" == 'Linux' ]]; then
   # we need pip to install python stuff
@@ -30,7 +30,7 @@ if [[ "$unamestr" == 'Linux' ]]; then
     else
         curl -o /tmp/libcapstone3.deb http://www.capstone-engine.org/download/3.0.4/ubuntu-14.04/libcapstone3_3.0.4-0.1ubuntu1_amd64.deb
     fi
-    
+
     HASH=`sha256sum /tmp/libcapstone3.deb 2>/dev/null | cut -d' ' -f1`
     if [ "$HASH" != "$LIBCAPSTONE64_SHA256" ] && [ "$HASH" != "$LIBCAPSTONE32_SHA256" ]; then
       echo "Error: libcapstone3.deb has an invalid checksum."
@@ -41,6 +41,9 @@ if [[ "$unamestr" == 'Linux' ]]; then
   elif [ $(which pacman) ]; then
     echo "installing pip"
     sudo pacman -S --needed --noconfirm base-devel python2-pip python2-virtualenv
+    PIP="pip2"
+  elif [ $(which dnf) ]; then
+    sudo dnf install -y python-pip python-devel gcc gcc-c++ python-virtualenv glib2-devel
     PIP="pip2"
   elif [ $(which yum) ]; then
     sudo yum install -y python-pip python-devel gcc gcc-c++ python-virtualenv glib2-devel
@@ -58,7 +61,7 @@ elif [[ "$unamestr" == 'Darwin' ]]; then
   if [ $(which brew) ]; then
     echo "Installing OS X dependencies"
     brew update
-    brew install python capstone
+    brew install python capstone graphviz
     pip install virtualenv
     cd tracers
     ./pin_build.sh
@@ -89,4 +92,3 @@ echo "  Check out README for more info"
 echo "  Or just dive in with 'qira /bin/ls'"
 echo "  And point Chrome to localhost:3002"
 echo "    ~geohot"
-
